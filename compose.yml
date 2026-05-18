@@ -123,6 +123,32 @@ services:
     networks:
       - todoapp-network
 
+  # ========================================
+  # Test Service
+  # ========================================
+  app-test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: test
+    container_name: todoapp_test
+    environment:
+      NODE_ENV: test
+      DOCKER_ENV: 'true'
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: todoapp
+      POSTGRES_USER: todoapp_test
+      POSTGRES_PASSWORD: '${POSTGRES_PASSWORD:-todoapp_password}'
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ['npm', 'run', 'test:coverage']
+    networks:
+      - todoapp-network
+    profiles:
+      - test
+
 # ========================================
 # Volume Configuration
 # ========================================
