@@ -1,4 +1,4 @@
-FROM dhi.io/node:24-alpine3.22 AS base
+FROM dhi.io/node:24-alpine3.22-dev AS base
 
 # Set working directory
 WORKDIR /app
@@ -28,7 +28,7 @@ RUN chown -R nodejs:nodejs /app
 # Build Dependencies Stage
 # ========================================
 FROM base AS build-deps
-    
+
 # Copy package files
 COPY package*.json ./
 
@@ -37,13 +37,13 @@ RUN --mount=type=cache,target=/root/.npm,sharing=locked \
     npm ci --no-audit --no-fund && \
     npm cache clean --force
 
+# Create necessary directories and set permissions
 RUN mkdir -p /app/node_modules/.vite && \
     chown -R nodejs:nodejs /app
 
 # ========================================
 # Build Stage
 # ========================================
-
 FROM build-deps AS build
 
 # Copy only necessary files for building (respects .dockerignore)
@@ -60,7 +60,7 @@ RUN chown -R nodejs:nodejs /app
 # ========================================
 FROM build-deps AS development
 
-#  Set environment variables
+# Set environment
 ENV NODE_ENV=development \
     NPM_CONFIG_LOGLEVEL=warn
 
@@ -96,18 +96,19 @@ RUN addgroup -g 1001 -S nodejs && \
 
 # Set optimized environment variables
 ENV NODE_ENV=production \
-NODE_OPTIONS="--max-old-space-size=256 --no-warnings" \
-NPM_CONFIG_LOGLEVEL=silent
+    NODE_OPTIONS="--max-old-space-size=256 --no-warnings" \
+    NPM_CONFIG_LOGLEVEL=silent
 
 # Copy production dependencies from deps stage
 COPY --from=deps --chown=nodejs:nodejs /app/node_modules ./node_modules
-COPY --from=deps --chown=nodejs:nodejs /app/dist ./dist
+COPY --from=deps --chown=nodejs:nodejs /app/package*.json ./
+# Copy built application from build stage
 COPY --from=build --chown=nodejs:nodejs /app/dist ./dist
 
-# Switch to non-root user
+# Switch to non-root user for security
 USER nodejs
 
-# Expose ports
+# Expose port
 EXPOSE 3000
 
 # Start production server
