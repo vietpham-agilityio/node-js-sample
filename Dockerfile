@@ -1,72 +1,132 @@
-# syntax=docker/dockerfile:1
+FROM dhi.io/node:24-alpine3.22 AS base
 
-# Comments are provided throughout this file to help you get started.
-# If you need more help, visit the Dockerfile reference guide at
-# https://docs.docker.com/go/dockerfile-reference/
+# Set working directory
+WORKDIR /app
 
-# Want to help us make this template better? Share your feedback here: https://forms.gle/ybq9Krt8jtBL3iCk7
+# Create non-root user for security
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S nodejs -u 1001 -G nodejs && \
+    chown -R nodejs:nodejs /app
 
-ARG NODE_VERSION=24.11.1-alpine
+# ========================================
+# Setup Dependencies Stage
+# ========================================
+FROM base AS deps
 
-################################################################################
-# Use node image for base image for all stages.
-FROM node:${NODE_VERSION}-alpine as base
+# Copy package files
+COPY package*.json ./
 
-# Set working directory for all build stages.
-WORKDIR /usr/src/app
+# Install production dependencies
+RUN --mount=type=cache,target=/root/.npm,sharing=locked \
+    npm ci --omit=dev && \
+    npm cache clean --force
 
+# Set proper ownership
+RUN chown -R nodejs:nodejs /app
 
-################################################################################
-# Create a stage for installing production dependecies.
-FROM base as deps
+# ========================================
+# Build Dependencies Stage
+# ========================================
+FROM base AS build-deps
+    
+# Copy package files
+COPY package*.json ./
 
-# Download dependencies as a separate step to take advantage of Docker's caching.
-# Leverage a cache mount to /root/.npm to speed up subsequent builds.
-# Leverage bind mounts to package.json and package-lock.json to avoid having to copy them
-# into this layer.
-RUN --mount=type=bind,source=package.json,target=package.json \
-    --mount=type=bind,source=package-lock.json,target=package-lock.json \
-    --mount=type=cache,target=/root/.npm \
-    npm ci --omit=dev
+# Install all dependencies with build optimizations
+RUN --mount=type=cache,target=/root/.npm,sharing=locked \
+    npm ci --no-audit --no-fund && \
+    npm cache clean --force
 
-################################################################################
-# Create a stage for building the application.
-FROM deps as build
+RUN mkdir -p /app/node_modules/.vite && \
+    chown -R nodejs:nodejs /app
 
-# Download additional development dependencies before building, as some projects require
-# "devDependencies" to be installed to build. If you don't need this, remove this step.
-RUN --mount=type=bind,source=package.json,target=package.json \
-    --mount=type=bind,source=package-lock.json,target=package-lock.json \
-    --mount=type=cache,target=/root/.npm \
-    npm ci
+# ========================================
+# Build Stage
+# ========================================
 
-# Copy the rest of the source files into the image.
-COPY . .
-# Run the build script.
+FROM build-deps AS build
+
+# Copy only necessary files for building (respects .dockerignore)
+COPY --chown=nodejs:nodejs . .
+
+# Build the application
 RUN npm run build
 
-################################################################################
-# Create a new stage to run the application with minimal runtime dependencies
-# where the necessary files are copied from the build stage.
-FROM base as final
+# Set proper ownership
+RUN chown -R nodejs:nodejs /app
 
-# Use production node environment by default.
-ENV NODE_ENV production
+# ========================================
+# Development Stage
+# ========================================
+FROM build-deps AS development
 
-# Run the application as a non-root user.
-USER node
+#  Set environment variables
+ENV NODE_ENV=development \
+    NPM_CONFIG_LOGLEVEL=warn
 
-# Copy package.json so that package manager commands can be used.
-COPY package.json .
+# Copy source files
+COPY . .
 
-# Copy the production dependencies from the deps stage and also
-# the built application from the build stage into the image.
-COPY --from=deps /usr/src/app/node_modules ./node_modules
-COPY --from=build /usr/src/app/dist ./dist
+# Ensure all directories have proper permissions
+RUN mkdir -p /app/node_modules/.vite && \
+    chown -R nodejs:nodejs /app && \
+    chmod -R 755 /app
 
+# Switch to non-root user
+USER nodejs
 
-# Expose the port that the application listens on.
+# Expose ports
+EXPOSE 3000 5173 9229
+
+# Start development server
+CMD ["npm", "run", "dev:docker"]
+
+# ========================================
+# Production Stage
+# ========================================
+FROM dhi.io/node:24-alpine3.22-dev AS production
+
+# Set working directory
+WORKDIR /app
+
+# Create non-root user for security
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S nodejs -u 1001 -G nodejs && \
+    chown -R nodejs:nodejs /app
+
+# Set optimized environment variables
+ENV NODE_ENV=production \
+NODE_OPTIONS="--max-old-space-size=256 --no-warnings" \
+NPM_CONFIG_LOGLEVEL=silent
+
+# Copy production dependencies from deps stage
+COPY --from=deps --chown=nodejs:nodejs /app/node_modules ./node_modules
+COPY --from=deps --chown=nodejs:nodejs /app/dist ./dist
+COPY --from=build --chown=nodejs:nodejs /app/dist ./dist
+
+# Switch to non-root user
+USER nodejs
+
+# Expose ports
 EXPOSE 3000
 
-# Run the application.
-CMD npm run dev
+# Start production server
+CMD ["node", "dist/server.js"]
+
+# ========================================
+# Test Stage
+# ========================================
+FROM build-deps AS test
+
+# Set environment
+ENV NODE_ENV=test \
+    CI=true
+
+# Copy source files
+COPY --chown=nodejs:nodejs . .
+
+# Switch to non-root user
+USER nodejs
+
+# Run tests with coverage
+CMD ["npm", "run", "test:coverage"]
