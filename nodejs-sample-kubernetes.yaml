@@ -20,7 +20,7 @@ metadata:
   namespace: todoapp
 data:
   NODE_ENV: "production"
-  ALLOWED_ORIGINS: "https://yourdomain.com"
+  ALLOWED_ORIGINS: "http://localhost:8080"
   POSTGRES_HOST: "todoapp-postgres"
   POSTGRES_PORT: "5432"
   POSTGRES_DB: "todoapp"
@@ -79,7 +79,7 @@ spec:
     spec:
       containers:
         - name: postgres
-          image: postgres:16-alpine
+          image: postgres:18-alpine
           ports:
             - containerPort: 5432
               name: postgres
@@ -101,7 +101,7 @@ spec:
                   key: postgres-password
           volumeMounts:
             - name: postgres-storage
-              mountPath: /var/lib/postgresql/data
+              mountPath: /var/lib/postgresql
           livenessProbe:
             exec:
               command:
@@ -175,7 +175,7 @@ spec:
         fsGroup: 1001
       containers:
         - name: todoapp
-          image: ghcr.io/your-username/docker-nodejs-sample:latest
+          image: pxviet/nodejs-sample:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 3000
